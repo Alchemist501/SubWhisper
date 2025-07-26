@@ -39,9 +39,10 @@ cd SubWhisper
 bash install.sh
 ```
 
-To remove the tool:
+Once SubWhisper is installed, the downloaded folder is no longer required for operation and can be deleted to reclaim disk space.
 
 ```bash
+# To remove the downloaded folder
 cd ..
 rm -rf SubWhisper
 ```
