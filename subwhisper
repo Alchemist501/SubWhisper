@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+
+# === Version ===
+VERSION="1.0.0"
+
+# === Color Definitions ===
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# === Global Variable for Trap ===
+OUTPUT_DIR=""
+
+# === Trap for graceful exit on Ctrl+C ===
+cleanup_on_interrupt() {
+    echo -e "\n${RED} Script interrupted. Cleaning up...${NC}"
+    if [[ -n "$OUTPUT_DIR" && -d "$OUTPUT_DIR" ]]; then
+        if [[ "$(pwd)" == "$(dirname "$OUTPUT_DIR")" ]]; then
+            echo -e "${BLUE}Removing partial results directory: ${YELLOW}$OUTPUT_DIR${NC}"
+            rm -rf "$OUTPUT_DIR"
+        fi
+    fi
+    exit 1
+}
+trap 'cleanup_on_interrupt' SIGINT SIGTERM
+
+export PATH="${GOPATH:-$HOME/go}/bin:$PATH"
+
+# === Helper Functions ===
+ask_for_approval() {
+    local prompt_message="$1"
+    while true; do
+        read -rp "$(echo -e "${YELLOW}${prompt_message} (y/n)? ${NC}")" response
+        case "$response" in
+            [yY][eE][sS]|[yY]) return 0 ;;
+            [nN][oO]|[nN]) return 1 ;;
+            *) echo -e "${RED}Invalid input. Please enter y or n.${NC}" ;;
+        esac
+    done
+}
+
+detect_pkg_manager() {
+    if command -v apt-get &>/dev/null; then echo "apt";
+    elif command -v dnf &>/dev/null; then echo "dnf";
+    elif command -v yum &>/dev/null; then echo "yum";
+    elif command -v pacman &>/dev/null; then echo "pacman";
+    else echo "unknown"; fi
+}
+
+install_go() {
+    if command -v go &>/dev/null; then
+        echo -e "${GREEN}Go (Golang) is already installed.${NC}"
+        return 0
+    fi
+    echo -e "${YELLOW}Go (Golang) is not found.${NC}"
+    if ! ask_for_approval "Do you want to install Go?"; then
+        echo -e "${RED}Go installation declined. Cannot proceed without Go.${NC}"
+        return 1
+    fi
+    local pkg_manager
+    pkg_manager=$(detect_pkg_manager)
+    if [[ "$pkg_manager" == "unknown" ]]; then
+        echo -e "${RED}Could not detect a suitable package manager to install Go.${NC}"
+        return 1
+    fi
+    echo -e "${BLUE}Attempting to install Go using $pkg_manager...${NC}"
+    case "$pkg_manager" in
+        apt) sudo apt update >/dev/null 2>&1 && sudo apt install -y golang-go >/dev/null 2>&1 ;;
+        dnf | yum) sudo "$pkg_manager" install -y golang >/dev/null 2>&1 ;;
+        pacman) sudo pacman -Syu --noconfirm go >/dev/null 2>&1 ;;
+        *) echo -e "${RED}Unsupported package manager: $pkg_manager${NC}"; return 1 ;;
+    esac
+    if ! command -v go &>/dev/null; then
+        echo -e "${RED}Go installation failed.${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}Go installed successfully.${NC}"
+}
+
+is_go_httpx_installed() {
+    local version_output
+    if command -v httpx &>/dev/null; then
+        version_output=$(httpx -version 2>&1)
+        if echo "$version_output" | grep -q 'projectdiscovery.io'; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+install_tool() {
+    local tool_name="$1"
+    local go_path="$2"
+    local install_output
+    if [[ "$tool_name" == "httpx" ]]; then
+        if is_go_httpx_installed; then echo -e "${GREEN}$tool_name is already installed.${NC}"; return 0; fi
+    elif command -v "$tool_name" &>/dev/null; then
+        echo -e "${GREEN}$tool_name is already installed.${NC}"; return 0
+    fi
+    echo -e "${YELLOW}$tool_name not found.${NC}"
+    if ! ask_for_approval "Do you want to install $tool_name?"; then
+        echo -e "${RED}$tool_name installation declined.${NC}"; return 1
+    fi
+    if ! command -v go &>/dev/null; then
+        echo -e "${RED}Go is required to install $tool_name.${NC}"; return 1
+    fi
+    echo -e "${BLUE}Attempting to install $tool_name...${NC}"
+    if [[ "$tool_name" == "amass" ]]; then
+        install_output=$(go install "$go_path"@master 2>&1 >/dev/null)
+    else
+        install_output=$(go install "$go_path"@latest 2>&1 >/dev/null)
+    fi
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Error: 'go install' failed for $tool_name.${NC}\n${RED}Go Install Output:\n$install_output${NC}"; return 1
+    fi
+    if { [[ "$tool_name" == "httpx" ]] && is_go_httpx_installed; } || command -v "$tool_name" &>/dev/null; then
+        echo -e "${GREEN}$tool_name installed successfully.${NC}"; return 0
+    fi
+    echo -e "${RED}$tool_name installation failed verification.${NC}"; return 1
+}
+
+update_tools() {
+    echo -e "${BLUE} Checking for updates...${NC}"
+    if ! command -v go &>/dev/null; then
+        echo -e "${RED}Go is not installed. Cannot update tools.${NC}"; return 1
+    fi
+    local updated_count=0
+    for tool in "${!TOOL_GO_PATHS[@]}"; do
+        if { [[ "$tool" == "httpx" ]] && ! is_go_httpx_installed; } || ! command -v "$tool" &>/dev/null; then
+            echo -e "  ${YELLOW}$tool not found. Skipping update.${NC}"; continue
+        fi
+        echo -e "  ${YELLOW}Updating $tool...${NC}"
+        local update_output
+        if [[ "$tool" == "amass" ]]; then
+            update_output=$(go install "${TOOL_GO_PATHS[$tool]}"@master 2>&1 >/dev/null)
+        else
+            update_output=$(go install "${TOOL_GO_PATHS[$tool]}"@latest 2>&1 >/dev/null)
+        fi
+        if [ $? -eq 0 ]; then
+            echo -e "  ${GREEN}$tool updated successfully.${NC}"; updated_count=$((updated_count + 1))
+        else
+            echo -e "  ${RED}Failed to update $tool:\n$update_output${NC}"
+        fi
+    done
+    echo -e "\n${GREEN}Update complete. $updated_count tools were updated.${NC}"
+}
+
+show_usage() {
+    echo -e "${YELLOW}Usage: SubWhisper -d domain.com [-x exclude1,exclude2] [-u] [-h]${NC}"
+    echo -e "  -d <domain>:    Specify the target domain."
+    echo -e "  -x <excludes>:  Comma-separated list of subdomains to exclude."
+    echo -e "  -u, --update:   Update all installed reconnaissance tools."
+    echo -e "  -h:             Display this help message."
+    echo -e "  --version:      Display the script version."
+}
+
+# === Argument Parsing & Initial Checks ===
+if [[ "$1" == "--version" ]]; then echo -e "${BLUE}subrecon v$VERSION${NC}"; exit 0; fi
+
+declare -A TOOL_GO_PATHS=(
+    ["subfinder"]="github.com/projectdiscovery/subfinder/v2/cmd/subfinder"
+    ["amass"]="github.com/owasp-amass/amass/v4/..."
+    ["assetfinder"]="github.com/tomnomnom/assetfinder"
+    ["httpx"]="github.com/projectdiscovery/httpx/cmd/httpx"
+)
+
+if [[ "$1" == "--update" ]]; then update_tools; exit 0; fi
+if [ "$#" -eq 0 ]; then show_usage; exit 0; fi
+
+while getopts ":d:x:uh" opt; do
+    case $opt in
+        d) DOMAIN=$OPTARG ;;
+        x) EXCLUDES_RAW=$OPTARG ;;
+        u) update_tools; exit 0 ;;
+        h) show_usage; exit 0 ;;
+        \?) echo -e "${RED}[-] Invalid option: -$OPTARG${NC}" >&2; show_usage; exit 1 ;;
+        :) echo -e "${RED}[-] Option -$OPTARG requires an argument.${NC}" >&2; show_usage; exit 1 ;;
+    esac
+done
+
+if [[ -z $DOMAIN ]]; then echo -e "${RED}[-] You must provide a domain with -d${NC}"; show_usage; exit 1; fi
+
+# === Reconnaissance Phase ===
+echo -e "${BLUE}[+] Starting recon for ${GREEN}$DOMAIN${NC}...${NC}"
+if ! install_go; then echo -e "${RED}[-] Exiting: Go is required.${NC}"; exit 1; fi
+for tool in "${!TOOL_GO_PATHS[@]}"; do
+    if ! install_tool "$tool" "${TOOL_GO_PATHS[$tool]}"; then echo -e "${RED}Exiting: $tool is required.${NC}"; exit 1; fi
+done
+
+OUTPUT_DIR="recon_${DOMAIN}_$(date +%F_%H-%M-%S)"
+echo -e "${BLUE}[+] Creating output directory: ${YELLOW}$OUTPUT_DIR${NC}"
+mkdir -p "$OUTPUT_DIR"
+cd "$OUTPUT_DIR" || { echo -e "${RED}[-] Failed to cd into $OUTPUT_DIR${NC}"; exit 1; }
+
+echo -e "${BLUE}[+] Gathering subdomains...${NC}"
+echo -e "  ${YELLOW}Running subfinder...${NC}"; subfinder -d "$DOMAIN" -silent -o subfinder.txt >/dev/null 2>&1
+echo -e "  ${YELLOW}Running amass(may take some time)...${NC}"; pkill amass &>/dev/null; amass enum -passive -d "$DOMAIN" -o amass.txt >/dev/null 2>&1
+echo -e "  ${YELLOW}Running assetfinder...${NC}"; assetfinder --subs-only "$DOMAIN" >assetfinder.txt 2>/dev/null
+for file in "subfinder.txt" "amass.txt" "assetfinder.txt"; do
+	if [ ! -f "$file" ] ; then
+		touch $file
+	fi
+done
+cat subfinder.txt amass.txt assetfinder.txt | sort -u >domains.txt
+
+if [[ -n "$EXCLUDES_RAW" ]]; then
+    echo -e "${BLUE}[+] Removing excluded subdomains...${NC}"
+    echo "$EXCLUDES_RAW" | tr ',' '\n' | while read -r sub; do
+        sed -i "/$(echo "$sub" | sed -e 's/[^^$.*+?|(){}\[\]\\]/\\&/g')/d" domains.txt
+    done
+fi
+
+echo -e "${BLUE}[+] Checking live domains with httpx...${NC}"
+cat domains.txt | httpx -silent -sc -td -title -no-color | grep -vE 'Netblock|contains' >livedomains.txt
+
+TOTAL_DOMAINS=$(wc -l <domains.txt)
+LIVE_DOMAINS=$(wc -l <livedomains.txt)
+
+echo -e "\n${GREEN}[+] Recon Complete!${NC}"
+echo -e "${BLUE}[+] Summary:${NC}"
+echo -e "  ${BLUE}Total unique subdomains found: ${YELLOW}$TOTAL_DOMAINS${NC}"
+echo -e "  ${BLUE}Total live domains identified: ${GREEN}$LIVE_DOMAINS${NC}"
+
+# =========================================================================
+BROWSER_NAME=""
+for browser in "google-chrome" "chromium-browser" "chromium" "firefox"; do
+    if command -v "$browser" &>/dev/null; then
+        BROWSER_NAME="$browser"
+        break
+    fi
+done
+echo -e "\n${BLUE}[+] Opening in $browser......"
+if [ -z "$BROWSER_NAME" ]; then
+    echo -e "${RED}Error: This process requires Google Chrome, Chromium, or Firefox.${NC}"
+    echo -e "   Please install one of them and try again."
+    exit 1
+fi
+if [ ! -s livedomains.txt ]; then
+    echo -e "${YELLOW} No live domains found. Skipping ...${NC}"
+    exit 0
+fi
+
+TEMPLATE_DIR="/usr/local/share/subwhisper/templates"
+HTML_TEMPLATE="$TEMPLATE_DIR/index.html.tpl"
+TXT_TEMPLATE="$TEMPLATE_DIR/report.txt.tpl"
+
+HTML_FILE="report.html"
+PAGE_TITLE="Subwhisper Report: ${DOMAIN}"
+# Generate the HTML content
+HTML_CONTENT=$(<"$HTML_TEMPLATE")
+HTML_CONTENT=${HTML_CONTENT//\{\{PAGE_TITLE\}\}/$PAGE_TITLE}
+HTML_CONTENT=${HTML_CONTENT//\{\{DOMAIN\}\}/$DOMAIN}
+HTML_CONTENT=${HTML_CONTENT//\{\{LIVE_DOMAINS\}\}/$LIVE_DOMAINS}
+HTML_CONTENT=${HTML_CONTENT//\{\{DATE\}\}/$(date)}
+# Replace excluded section
+if [ -n "$EXCLUDES_RAW" ]; then
+    EXCLUDED_SECTION="<div class='excluded-box'><strong>Excluded:</strong> $EXCLUDES_RAW</div>"
+else
+    EXCLUDED_SECTION=""
+fi
+HTML_CONTENT=${HTML_CONTENT//\{\{EXCLUDED_SECTION\}\}/$EXCLUDED_SECTION}
+# Generate domain rows dynamically
+DOMAIN_ROWS=""
+while IFS= read -r line; do
+    url=$(echo "$line" | awk '{print $1}')
+    status_raw=$(echo "$line" | awk '{print $2}')
+    info=$(echo "$line" | awk -F'[][]' '{print "* " $(NF-3) "\n- " $(NF-1) "\n"}')
+    status_code=$(echo "$status_raw" | grep -oE '[0-9]{3}' | head -1)
+    case "$status_code" in
+        2*) ICON_COLOR="#00ff9d";; 3*) ICON_COLOR="#ffcc00";; 4*) ICON_COLOR="#ff8c00";; 5*) ICON_COLOR="#ff4d4d";; *) ICON_COLOR="#888";;
+    esac
+    STATUS_ICON="<svg width='10' height='10'><circle cx='5' cy='5' r='5' fill='${ICON_COLOR}'/></svg>"
+    [[ ! "$url" =~ ^https?:// ]] && url_link="http://${url}" || url_link="$url"
+    DOMAIN_ROWS+="<div class='line'><span class='url'><a href='${url_link}' target='_blank'>${url}</a></span><span class='status'>${STATUS_ICON} ${status_raw}</span><span class='info'>${info}</span></div>"
+done < livedomains.txt
+HTML_CONTENT=${HTML_CONTENT//\{\{DOMAIN_ROWS\}\}/$DOMAIN_ROWS}
+
+# Save final HTML
+echo "$HTML_CONTENT" > "$HTML_FILE"
+"$BROWSER_NAME" "$HTML_FILE"
+
+echo -e "\n${BLUE}[+] Generating Report...${NC}"
+
+TEXT_FILE="Subwhisper_Report_${DOMAIN}.txt"
+SCAN_ID="SW-$(date +%Y%m%d)"
+SCAN_DATE=$(date '+%B %d, %Y, %r %Z')
+
+TXT_CONTENT=$(<"$TXT_TEMPLATE")
+TXT_CONTENT=${TXT_CONTENT//\{\{SCAN_ID\}\}/SW-$(date +%Y%m%d)}
+TXT_CONTENT=${TXT_CONTENT//\{\{SCAN_DATE\}\}/$(date '+%B %d, %Y, %r %Z')}
+TXT_CONTENT=${TXT_CONTENT//\{\{DOMAIN\}\}/$DOMAIN}
+TXT_CONTENT=${TXT_CONTENT//\{\{TOTAL_DOMAINS\}\}/$TOTAL_DOMAINS}
+TXT_CONTENT=${TXT_CONTENT//\{\{LIVE_DOMAINS\}\}/$LIVE_DOMAINS}
+TXT_CONTENT=${TXT_CONTENT//\{\{EXCLUDED\}\}/$EXCLUDES_RAW}
+
+LIVE_DOMAIN_LIST=$(awk '{print $1}' livedomains.txt | tr '\n' '\n')
+TXT_CONTENT=${TXT_CONTENT//\{\{LIVE_DOMAIN_LIST\}\}/$LIVE_DOMAIN_LIST}
+echo "$TXT_CONTENT" > "$TEXT_FILE"
+echo -e "${GREEN} The final report is saved to $TEXT_FILE"
