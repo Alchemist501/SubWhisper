@@ -18,7 +18,7 @@ mkdir -p "$install_dir/templates"
 # Copy files (not move)
 cp subwhisper /usr/local/bin/subwhisper
 cp templates/index.html.tpl "$install_dir/templates/index.html.tpl"
-cp templates/report.html.tpl "$install_dir/templates/report.html.tpl"
+cp templates/report.txt.tpl "$install_dir/templates/report.txt.tpl"
 
 echo "[+] Installation complete!"
 echo "You can now run the tool using: subwhisper"

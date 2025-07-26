@@ -36,7 +36,7 @@ SubWhisper simplifies the process of mapping an organization's external attack s
 ```bash
 git clone https://github.com/Alchemist501/SubWhisper.git
 cd SubWhisper
-bash install.sh
+sudo bash install.sh
 ```
 
 Once SubWhisper is installed, the downloaded folder is no longer required for operation and can be deleted to reclaim disk space.
