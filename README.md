@@ -33,19 +33,42 @@ SubWhisper simplifies the process of mapping an organization's external attack s
 
 ## Installation
 
+### 1. Git clone
+
 ```bash
 git clone https://github.com/Alchemist501/SubWhisper.git
 cd SubWhisper
+```
+
+### 2. Installing tool:
+
+You have two primary options for setting up SubWhisper:
+
+**Option 1: System-Wide Installation (Recommended)**
+
+This method installs SubWhisper and its report templates to standard system paths, allowing you to run it from any directory.
+
+1. Run the installer script as a root user:
+
+```
 sudo bash install.sh
 ```
 
-Once SubWhisper is installed, the downloaded folder is no longer required for operation and can be deleted to reclaim disk space.
+2. Clean up (Optional): Once installed, the downloaded folder is no longer required for operation and can be deleted to reclaim disk space.
 
 ```bash
-# To remove the downloaded folder
 cd ..
 rm -rf SubWhisper
 ```
+
+**Option 2: Direct Execution (No System-Wide Install)**
+
+This method allows you to run SubWhisper directly from its downloaded location without installing it to system paths.
+
+    chmod +x subwhisper
+    ./subwhisper
+
+You will need to run it from within the SubWhisper directory or provide its full path.
 
 ## Usage
 
