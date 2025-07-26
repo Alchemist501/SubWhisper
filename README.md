@@ -102,6 +102,20 @@ Update tools:
 subwhisper --update
 ```
 
+## Screenshots
+
+### Running SubWhisper
+
+![Running SubWhisper](screenshots/SubWhisper.png)
+
+### HTML Report
+
+![HTML Report](screenshots/Index.png)
+
+### Text Report
+
+![Text Report](screenshots/Report.png)
+
 ## Output
 
 After running, the script creates a directory named `recon_<DOMAIN>_<DATE_TIME>` (e.g., `recon_example.com_2025-07-26_13-45-00`) containing:
